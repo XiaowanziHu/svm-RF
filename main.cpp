@@ -42,6 +42,7 @@ int main()
 	int* klabels1 = nullptr;
 	if (0 == klabels1) klabels1 = new int[3000];
 	svm();
+	//RF();
 	string inpath = "klabels1-3000";
 	Txttopointer(height, width, klabels, inpath);
 	string Respath = "train-feature\\result\\1GLCM+Spec-30004.txt";
@@ -121,7 +122,108 @@ void svm()
 	}
 	cout << "svm over" << endl;
 }
+void RF()
+{
+	Mat train_data1, train_label1, train_data2, train_label2, train_data3, train_label3;
+	GLCM glcm;
+	getTrainData4(train_data2, train_label1, "train-feature\\1\\1featuresTraOut-gengdi-GLCM_30004.txt", "train-feature\\1\\1featuresTraOut-daolu-GLCM_30004.txt", "train-feature\\1\\1featuresTraOut-jianzhu-GLCM_30004.txt", "train-feature\\1\\1featuresTraOut-shuiti-GLCM_30004.txt");
+	getTrainData4(train_data3, train_label3, "train-feature\\1\\1featuresTraOut-gengdi-Spec_30004.txt", "train-feature\\1\\1featuresTraOut-daolu-Spec_30004.txt", "train-feature\\1\\1featuresTraOut-jianzhu-Spec_30004.txt", "train-feature\\1\\1featuresTraOut-shuiti-Spec_30004.txt");
 
+	hconcat(train_data2, train_data3, train_data1);
+
+	int nsamples_all = train_data1.rows;  //样本总数
+	int ntrain_samples = (int)(nsamples_all*0.8);  //训练样本个数
+	cout << "Training the classifier ...\n" << endl;
+	Mat sample_idx = Mat::zeros(1, train_data1.rows, CV_8U);
+	int nvars = train_data1.cols;
+	Mat var_type(nvars + 1, 1, CV_8U);
+	var_type.setTo(Scalar::all(VAR_ORDERED));
+	var_type.at<uchar>(nvars) = VAR_CATEGORICAL;
+
+	Ptr<TrainData> tData = TrainData::create(train_data1, ROW_SAMPLE, train_label1, noArray(), sample_idx, noArray(), var_type);//这里的train_data是CV_32F；
+
+	// 创建分类器
+	Ptr<RTrees> model;
+	model = RTrees::create();
+	//树的最大可能深度
+	model->setMaxDepth(10);
+	//节点最小样本数量
+	model->setMinSampleCount(10);
+	//回归树的终止标准
+	model->setRegressionAccuracy(0);
+	//是否建立替代分裂点
+	model->setUseSurrogates(false);
+	//最大聚类簇数
+	model->setMaxCategories(15);
+	//先验类概率数组
+	model->setPriors(Mat());
+	//计算的变量重要性
+	model->setCalculateVarImportance(true);
+	//树节点随机选择的特征子集的大小
+	model->setActiveVarCount(4);
+	//终止标准
+	model->setTermCriteria(TermCriteria(TermCriteria::MAX_ITER + (0.01f > 0 ? TermCriteria::EPS : 0), 100, 0.01f));
+	//训练模型
+	model->train(tData);
+	//保存训练完成的模型
+	//model->save("filename_to_save.xml");
+
+	cout << "train over" << endl;
+	cout << "predict begin" << endl;
+
+	//读取测试文件并转化为Mat类
+	Mat test_data, test_dataGLCM, test_dataSpec;
+	ifstream test_GLCM, test_Spec;
+	test_GLCM.open("train-feature\\1featureFileGLCM-all-3000.txt", ios::binary | ios::app | ios::in | ios::out);
+	test_Spec.open("train-feature\\1featureFileSpec-all-3000.txt", ios::binary | ios::app | ios::in | ios::out);
+	TxtToMat(test_GLCM, test_dataGLCM);
+	TxtToMat(test_Spec, test_dataSpec);
+	hconcat(test_dataGLCM, test_dataSpec, test_data);
+	cout << test_data.rows << endl;
+	cout << test_data.cols << endl;	
+	//cout << test_data<<endl;
+	test_data.convertTo(test_data, CV_32F);//这里必须要转换数据格式
+	for (int i = 0; i < test_data.rows; ++i)
+	//for (int i = 0; i < train_data1.rows; ++i)
+	{
+		float *p_sample = test_data.ptr<float>(i);
+		//float *p_sample = train_data1.ptr<float>(i);
+		//cout << p_sample[0] << p_sample[1] << p_sample[2] << p_sample[3]<<endl;
+		Mat sampleMat(1, 8, CV_32FC1);
+		sampleMat.at<float>(0, 0) = p_sample[0];
+		sampleMat.at<float>(0, 1) = p_sample[1];
+		sampleMat.at<float>(0, 2) = p_sample[2];
+		sampleMat.at<float>(0, 3) = p_sample[3];
+		sampleMat.at<float>(0, 4) = p_sample[4];
+		sampleMat.at<float>(0, 5) = p_sample[5];
+		sampleMat.at<float>(0, 6) = p_sample[6];
+		sampleMat.at<float>(0, 7) = p_sample[7];
+		//cout << sampleMat << endl;
+			int response1 = model->predict(sampleMat);
+			cout << response1 << endl;
+			ofstream outfile;
+			outfile.open("train-feature\\Result\\1GLCM+Spec-30004.txt", ios::binary | ios::app | ios::in | ios::out);
+			if (outfile.is_open())
+			{
+				outfile << (4000+response1);
+				outfile << "\r\n";
+			}
+			outfile.close();
+	}
+	//随机森林中的树个数
+	cout << "Number of trees: " << model->getRoots().size() << endl;
+	// 变量重要性
+	Mat var_importance = model->getVarImportance();
+	if (!var_importance.empty())
+	{
+		double rt_imp_sum = sum(var_importance)[0];
+		printf("var#\timportance (in %%):\n");
+		int i, n = (int)var_importance.total();
+		for (i = 0; i < n; i++)
+			printf("%-2d\t%-4.1f\n", i, 100.f*var_importance.at<float>(i) / rt_imp_sum);
+	}
+	cout << "over" << endl;
+}
 
 void getTrainData4(Mat &train_data, Mat &train_label, string path1, string path2, string path3, string path4)
 {
